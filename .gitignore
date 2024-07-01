@@ -1,4 +1,14 @@
+# not commit file ############################################################
+
 .Rproj.user
+#  History files
 .Rhistory
+
+# Session Data files
 .RData
+
+# User_specific files
 .Ruserdata
+
+# Example code in package build prosess
+*setting.R
