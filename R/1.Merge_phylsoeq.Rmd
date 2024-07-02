@@ -1,0 +1,134 @@
+---
+title: "Untitled"
+author: "kim soyeon"
+date: "2024-07-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+library(ggplot2)
+library(phyloseq)
+library(dplyr)
+
+`%!in%` <- Negate(`%in%`)
+
+ps <- readRDS("./moving-picture.rds")
+# phyloseq-class experiment-level object
+# otu_table()   OTU Table:         [ 770 taxa and 34 samples ]
+# sample_data() Sample Data:       [ 34 samples by 8 sample variables ]
+# tax_table()   Taxonomy Table:    [ 770 taxa by 7 taxonomic ranks ]
+# phy_tree()    Phylogenetic Tree: [ 770 tips and 768 internal nodes ]
+```
+# Species level로 합치기 
+- 샘플링 부위가 Gut과 Gut이 아닌걸로 나누어 줍니다. 
+- ASV도 각 샘플에서만 발견되는 것으로 필터링 해줍니다. 
+```{r}
+
+ps.sp <- tax_glom(ps, "Species") # 351 taxa and 34 samples 
+
+ps.gut <- subset_samples(ps.sp, body.site %in% "gut")
+ps.gut <- prune_taxa(taxa_sums(ps.gut) >0, ps.gut) # 80  taxa and 8 samples
+
+ps.other <- subset_samples(ps.sp, body.site %!in% "gut")
+ps.other <- prune_taxa(taxa_sums(ps.other) >0, ps.other) # 328  taxa and 26 samples
+
+
+melt.gut <- psmelt(ps.gut)
+melt.other <- psmelt(ps.other)
+
+melt.total <- rbind(melt.gut, melt.other)
+
+
+```
+
+phyloseq을 합치는 방법에는 여러가지가 있지만, 저는 melt로 모든데이터를 녹이고 다시 만드는 방법을 사용하겠습니다.
+위 방법은 데이터 크기가 너무 크면 좀 부담이있을거에요.
+- 여기서 Species를 기준으로 합치는 것은 샘플에 따라 OTU이름이 달라지기때문입니다
+
+# Merge TAX table
+이때 우리는 합쳐진 mele data를 기준으로 unique한 taxa만 추출해보자
+
+```{r}
+
+melt.total$Species_2 <- gsub(pattern = "  ", replacement = "_", x = melt.total$Species) 
+melt.total$Species_2 <- gsub(pattern = " ", replacement = "_", x = melt.total$Species_2) 
+# melt.total$Species_2 <- gsub(pattern = "\\[", replacement = "", x = melt.total$Species_2) 
+# melt.total$Species_2 <- gsub(pattern = "\\]", replacement = "", x = melt.total$Species_2) 
+
+melt.total$Species_2 %>% unique # 350 
+
+# 각 taxonomic rank로 그룹화하여 unique한 taxa 식별
+unique_taxa <- melt.total %>%
+  distinct(Kingdom, Phylum, Class, Order, Family, Genus, Species) %>%
+  mutate(Species_num = paste0("Species_", sprintf("%03d", row_number())))
+dim(unique_taxa)
+
+merge.tax <- unique_taxa
+rownames(merge.tax) <- merge.tax$Species_num
+
+
+melt.total2 <- melt.total %>%
+  left_join(unique_taxa, by = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species"))
+
+```
+
+
+# Merge OTU table
+```{r}
+library(tidyr)
+
+
+
+merge.otu <-  melt.total2 %>% select(Species_num, Sample, Abundance)  %>% # 9158
+  # group_by(Species_num, Sample) %>% 
+  # summarize(Abundance2 = sum(Abundance), .groups = 'drop') %>% # 9141 
+  pivot_wider(names_from = Sample, values_from = Abundance) %>% 
+  select(Species_num, everything())
+merge.otu
+merge.otu[is.na(merge.otu)] <- 0
+merge.otu <- merge.otu %>% tibble::column_to_rownames("Species_num")
+
+```
+
+
+
+metadata를 합치기 
+```{r}
+
+merge.meta <- melt.total %>% 
+  select(Sample, body.site, subject, reported.antibiotic.usage) %>% 
+  unique
+rownames(merge.meta) <- merge.meta$Sample
+```
+phyloseq 만들기
+```{r}
+
+merge.meta
+merge.otu
+merge.tax
+
+phy <- phyloseq(otu_table(as.matrix(merge.otu), taxa_are_rows = T),
+                tax_table(as.matrix(merge.tax)),
+                sample_data(merge.meta)
+                )
+phy
+# phyloseq-class experiment-level object
+# otu_table()   OTU Table:         [ 351 taxa and 34 samples ]
+# sample_data() Sample Data:       [ 34 samples by 4 sample variables ]
+# tax_table()   Taxonomy Table:    [ 351 taxa by 8 taxonomic ranks ]
+
+
+```
+
+
+```{r}
+
+
+
+```
+
